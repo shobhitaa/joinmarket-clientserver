@@ -1,5 +1,5 @@
 #! /usr/bin/env python
-
+from jmbitcoin import *
 import datetime
 import os
 import time
@@ -24,6 +24,9 @@ from jmclient import Maker, jm_single, load_program_config, \
     SNICKERReceiverService, SNICKERReceiver, create_wallet, \
     StorageError, StoragePasswordError
 from jmbase.support import EXIT_ARGERROR, EXIT_FAILURE
+import glob
+
+import jwt
 
 jlog = get_log()
 
@@ -91,6 +94,7 @@ class JMWalletDaemon(Service):
         """ Port is the port to serve this daemon
         (using HTTP/TLS).
         """
+        print("in init")
         # cookie tracks single user's state.
         self.cookie = None
         self.port = port
@@ -167,9 +171,24 @@ class JMWalletDaemon(Service):
         request.setResponseCode(401)
         return "Service cannot be stopped as it is not running."
 
+    # def check_cookie(self, request):
+    #     request_cookie = request.getHeader(b"JMCookie")
+    #     if self.cookie != request_cookie:
+    #         jlog.warn("Invalid cookie: " + str(
+    #             request_cookie) + ", request rejected.")
+    #         raise NotAuthorized()
+
     def check_cookie(self, request):
-        request_cookie = request.getHeader(b"JMCookie")
-        if self.cookie != request_cookie:
+        print("header details:")
+        #part after bearer is what we need
+        auth_header=((request.getHeader('Authorization')))
+        request_cookie = None
+        if auth_header is not None:
+            request_cookie=auth_header[7:]
+        
+        print("request cookie is",request_cookie)
+        print("actual cookie is",self.cookie)
+        if request_cookie==None or self.cookie != request_cookie:
             jlog.warn("Invalid cookie: " + str(
                 request_cookie) + ", request rejected.")
             raise NotAuthorized()
@@ -225,16 +244,24 @@ class JMWalletDaemon(Service):
         the active wallet at the chosen mixdepth.
         """
         assert isinstance(request.content, BytesIO)
+        
         payment_info_json = self.get_POST_body(request, ["mixdepth", "amount_sats",
                                                          "destination"])
+        
         if not payment_info_json:
             raise InvalidRequestFormat()
         if not self.wallet_service:
             raise NoWalletFound()
-        tx = direct_send(self.wallet_service, payment_info_json["amount_sats"],
-                    payment_info_json["mixdepth"],
-                    optin_rbf=payment_info_json["optin_rbf"],
+        
+        tx = direct_send(self.wallet_service, int(payment_info_json["amount_sats"]),
+                    int(payment_info_json["mixdepth"]),
+                    destination=payment_info_json["destination"],
                     return_transaction=True)
+        
+        # tx = direct_send(self.wallet_service, payment_info_json["amount_sats"],
+        #             payment_info_json["mixdepth"],
+        #             optin_rbf=payment_info_json["optin_rbf"],
+        #             return_transaction=True)
         return response(request, walletname=walletname,
                         txinfo=human_readable_transaction(tx))
 
@@ -281,6 +308,7 @@ class JMWalletDaemon(Service):
             raise NoWalletFound()
         else:
             self.wallet_service.stopService()
+            self.cookie = None
             self.wallet_service = None
             # success status implicit:
             return response(request, walletname=walletname)
@@ -313,6 +341,8 @@ class JMWalletDaemon(Service):
 
         request_data = self.get_POST_body(request,
                         ["walletname", "password", "wallettype"])
+        
+        
         if not request_data or request_data["wallettype"] not in [
             "sw", "sw-legacy"]:
             raise InvalidRequestFormat()
@@ -324,15 +354,20 @@ class JMWalletDaemon(Service):
         # data to construct the wallet path:
         wallet_root_path = os.path.join(jm_single().datadir, "wallets")
         wallet_name = os.path.join(wallet_root_path, request_data["walletname"])
+        
         try:
-            wallet = create_wallet(wallet_name,  request_data["password"],
+            wallet = create_wallet(wallet_name,  request_data["password"].encode("ascii"),
                                4, wallet_cls=wallet_cls)
+            
         except StorageError as e:
             raise NotAuthorized(repr(e))
 
         # finally, after the wallet is successfully created, we should
         # start the wallet service:
+
+        #return response(request,message="Wallet Created Succesfully,unlock it for further use")
         return self.initialize_wallet_service(request, wallet)
+
 
     def initialize_wallet_service(self, request, wallet):
         """ Called only when the wallet has loaded correctly, so
@@ -342,7 +377,18 @@ class JMWalletDaemon(Service):
         no expiry currently implemented), or until the user switches
         to a new wallet.
         """
-        self.cookie = request.getHeader(b"JMCookie")
+        
+        encoded_token = jwt.encode({"wallet": "name_of_wallet","exp" :datetime.datetime.utcnow()+datetime.timedelta(minutes=30)},"secret")
+        encoded_token = encoded_token.strip()
+        print(encoded_token)
+        # decoded_token = jwt.decode(encoded_token,"secret",algorithms=["HS256"])
+        # print(decoded_token)
+        # request.addCookie(b'session_token', encoded_token)
+        # self.cookie = encoded_token
+        self.cookie = encoded_token
+        #self.cookie = request.getHeader(b"JMCookie")
+
+
         if self.cookie is None:
             raise NotAuthorized("No cookie")
 
@@ -355,13 +401,16 @@ class JMWalletDaemon(Service):
         self.wallet_service.startService()
         # now that the WalletService instance is active and ready to
         # respond to requests, we return the status to the client:
+
+        #def response(request, succeed=True, status=200, **kwargs):
         return response(request,
                         walletname=self.wallet_service.get_wallet_name(),
-                        already_loaded=False)
+                        already_loaded=False,token=encoded_token)
 
     @app.route('/wallet/<string:walletname>/unlock', methods=['POST'])
     def unlockwallet(self, request, walletname):
         print_req(request)
+        print(get_current_chain_params())
         assert isinstance(request.content, BytesIO)
         auth_json = self.get_POST_body(request, ["password"])
         if not auth_json:
@@ -385,6 +434,22 @@ class JMWalletDaemon(Service):
             return response(request,
                             walletname=self.wallet_service.get_wallet_name(),
                             already_loaded=True)
+
+
+    #This route should return list of current wallets created.
+    @app.route('/wallet/all', methods=['GET'])
+    def listwallets(self, request):
+        #this is according to the assumption that wallets are there in /.joinmarket by default, also currently path for linux system only.
+        #first user taken for path
+        user_path = glob.glob('/home/*/')[0]
+        print(user_path)
+        wallet_dir = f"{user_path}.joinmarket/wallets/*.jmdat"
+        wallets = (glob.glob(wallet_dir))
+        
+        offset = len(user_path)+len('.joinmarket/wallets/')
+        #to get only names
+        short_wallets = [wallet[offset:] for wallet in wallets]
+        return response(request,wallets=short_wallets)
 
 def jmwalletd_main():
     import sys
@@ -415,6 +480,8 @@ def jmwalletd_main():
     start_reactor(jm_single().config.get("DAEMON", "daemon_host"),
                   jm_single().config.getint("DAEMON", "daemon_port"),
                   None, daemon=daemon)
+
+    
 
 if __name__ == "__main__":
     jmwalletd_main()
