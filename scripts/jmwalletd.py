@@ -256,7 +256,7 @@ class JMWalletDaemon(Service):
         tx = direct_send(self.wallet_service, int(payment_info_json["amount_sats"]),
                     int(payment_info_json["mixdepth"]),
                     destination=payment_info_json["destination"],
-                    return_transaction=True)
+                    return_transaction=True,answeryes=True)
         
         # tx = direct_send(self.wallet_service, payment_info_json["amount_sats"],
         #             payment_info_json["mixdepth"],
@@ -410,7 +410,7 @@ class JMWalletDaemon(Service):
     @app.route('/wallet/<string:walletname>/unlock', methods=['POST'])
     def unlockwallet(self, request, walletname):
         print_req(request)
-        print(get_current_chain_params())
+        #print(get_current_chain_params())
         assert isinstance(request.content, BytesIO)
         auth_json = self.get_POST_body(request, ["password"])
         if not auth_json:
