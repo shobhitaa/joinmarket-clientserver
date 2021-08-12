@@ -243,6 +243,7 @@ class JMWalletDaemon(Service):
         """ Use the contents of the POST body to do a direct send from
         the active wallet at the chosen mixdepth.
         """
+        self.check_cookie(request)
         assert isinstance(request.content, BytesIO)
         
         payment_info_json = self.get_POST_body(request, ["mixdepth", "amount_sats",
@@ -281,6 +282,13 @@ class JMWalletDaemon(Service):
         daemon_serving_host, daemon_serving_port = get_daemon_serving_params()
         if daemon_serving_port == -1 or daemon_serving_host == "":
             raise BackendNotReady()
+        for key,val in config_json.items():
+            if(key=='cjfee_r'):
+                config_json[key] = float(config_json[key])
+            elif(key=='ordertype'):
+                pass
+            else:
+                config_json[key] = int(config_json[key])
 
         self.services["maker"] = YieldGeneratorService(self.wallet_service,
                                 daemon_serving_host, daemon_serving_port,
@@ -442,7 +450,7 @@ class JMWalletDaemon(Service):
         #this is according to the assumption that wallets are there in /.joinmarket by default, also currently path for linux system only.
         #first user taken for path
         user_path = glob.glob('/home/*/')[0]
-        print(user_path)
+        
         wallet_dir = f"{user_path}.joinmarket/wallets/*.jmdat"
         wallets = (glob.glob(wallet_dir))
         
