@@ -7,6 +7,7 @@ import abc
 import json
 import atexit
 from io import BytesIO
+from jmclient.wallet_utils import wallet_showseed
 from twisted.python.log import startLogging
 from twisted.internet import endpoints, reactor, ssl, task
 from twisted.web.server import Site
@@ -366,6 +367,9 @@ class JMWalletDaemon(Service):
         try:
             wallet = create_wallet(wallet_name,  request_data["password"].encode("ascii"),
                                4, wallet_cls=wallet_cls)
+            print("seedphrase is ")
+            seedphrase = wallet_showseed(wallet)
+            print(seedphrase)
             
         except StorageError as e:
             raise NotAuthorized(repr(e))
@@ -374,10 +378,10 @@ class JMWalletDaemon(Service):
         # start the wallet service:
 
         #return response(request,message="Wallet Created Succesfully,unlock it for further use")
-        return self.initialize_wallet_service(request, wallet)
+        return self.initialize_wallet_service(request, wallet,seedphrase=seedphrase)
 
 
-    def initialize_wallet_service(self, request, wallet):
+    def initialize_wallet_service(self, request, wallet,**kwargs):
         """ Called only when the wallet has loaded correctly, so
         authorization is passed, so set cookie for this wallet
         (currently THE wallet, daemon does not yet support multiple).
@@ -411,7 +415,12 @@ class JMWalletDaemon(Service):
         # respond to requests, we return the status to the client:
 
         #def response(request, succeed=True, status=200, **kwargs):
-        return response(request,
+        if('seedphrase' in kwargs):
+            return response(request,
+                        walletname=self.wallet_service.get_wallet_name(),
+                        already_loaded=False,token=encoded_token,seedphrase = kwargs.get('seedphrase'))
+        else:
+            return response(request,
                         walletname=self.wallet_service.get_wallet_name(),
                         already_loaded=False,token=encoded_token)
 
@@ -458,6 +467,16 @@ class JMWalletDaemon(Service):
         #to get only names
         short_wallets = [wallet[offset:] for wallet in wallets]
         return response(request,wallets=short_wallets)
+
+    #route to get external address for deposit
+    @app.route('/address/new/<string:mixdepth>',methods=['GET'])
+    def getaddress(self,request,mixdepth):
+        # self.check_cookie(request)
+        if not self.wallet_service:
+            raise NoWalletFound()
+        mixdepth = int(mixdepth)
+        address = self.wallet_service.get_external_addr(mixdepth)
+        return response(request,address=address)
 
 def jmwalletd_main():
     import sys
