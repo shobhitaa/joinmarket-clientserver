@@ -7,7 +7,7 @@ import abc
 import json
 import atexit
 from io import BytesIO
-from jmclient.wallet_utils import wallet_showseed
+from jmclient.wallet_utils import wallet_showseed,wallet_showutxos
 from twisted.python.log import startLogging
 from twisted.internet import endpoints, reactor, ssl, task
 from twisted.web.server import Site
@@ -20,11 +20,12 @@ from jmbitcoin import human_readable_transaction
 from jmclient import Maker, jm_single, load_program_config, \
     JMClientProtocolFactory, start_reactor, calc_cj_fee, \
     WalletService, add_base_options, get_wallet_path, direct_send, \
-    open_test_wallet_maybe, wallet_display, SegwitLegacyWallet, \
+    open_test_wallet_maybe, wallet, wallet_display, SegwitLegacyWallet, \
     SegwitWallet, get_daemon_serving_params, YieldGeneratorService, \
     SNICKERReceiverService, SNICKERReceiver, create_wallet, \
     StorageError, StoragePasswordError
 from jmbase.support import EXIT_ARGERROR, EXIT_FAILURE
+
 import glob
 
 import jwt
@@ -477,6 +478,16 @@ class JMWalletDaemon(Service):
         mixdepth = int(mixdepth)
         address = self.wallet_service.get_external_addr(mixdepth)
         return response(request,address=address)
+
+    #route to list transactions
+    @app.route('/wallet/transactions',methods=['GET'])
+    def listTransactions(self,request):
+        if not self.wallet_service:
+            raise NoWalletFound()
+        transactions = wallet_showutxos(self.wallet_service,False)
+        print(transactions)
+        return response(request,transactions=transactions)
+        
 
 def jmwalletd_main():
     import sys
