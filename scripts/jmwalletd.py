@@ -283,11 +283,11 @@ class JMWalletDaemon(Service):
         daemon_serving_host, daemon_serving_port = get_daemon_serving_params()
         if daemon_serving_port == -1 or daemon_serving_host == "":
             raise BackendNotReady()
+
         for key,val in config_json.items():
-            if(key=='cjfee_r'):
-                config_json[key] = float(config_json[key])
-            elif(key=='ordertype'):
+            if(key == 'cjfee_r' or key == 'ordertype'):
                 pass
+            
             else:
                 config_json[key] = int(config_json[key])
 
@@ -368,8 +368,8 @@ class JMWalletDaemon(Service):
             wallet = create_wallet(wallet_name,  request_data["password"].encode("ascii"),
                                4, wallet_cls=wallet_cls)
             print("seedphrase is ")
-            seedphrase = wallet_showseed(wallet)
-            print(seedphrase)
+            seedphrase_help_string = wallet_showseed(wallet)
+            
             
         except StorageError as e:
             raise NotAuthorized(repr(e))
@@ -378,7 +378,7 @@ class JMWalletDaemon(Service):
         # start the wallet service:
 
         #return response(request,message="Wallet Created Succesfully,unlock it for further use")
-        return self.initialize_wallet_service(request, wallet,seedphrase=seedphrase)
+        return self.initialize_wallet_service(request, wallet, seedphrase=seedphrase_help_string)
 
 
     def initialize_wallet_service(self, request, wallet,**kwargs):
