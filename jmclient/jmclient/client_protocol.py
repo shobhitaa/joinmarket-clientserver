@@ -15,7 +15,7 @@ import os
 import sys
 from jmbase import (get_log, EXIT_FAILURE, hextobin, bintohex,
                     utxo_to_utxostr, bdict_sdict_convert)
-from jmclient import (jm_single, get_irc_mchannels,
+from jmclient import (jm_single, get_mchannels,
                       RegtestBitcoinCoreInterface,
                       SNICKERReceiver, process_shutdown)
 import jmbitcoin as btc
@@ -415,7 +415,7 @@ class JMMakerClientProtocol(JMClientProtocol):
                                                    "blockchain_source")
         #needed only for channel naming convention
         network = jm_single().config.get("BLOCKCHAIN", "network")
-        irc_configs = get_irc_mchannels()
+        irc_configs = get_mchannels()
         #only here because Init message uses this field; not used by makers TODO
         minmakers = jm_single().config.getint("POLICY", "minimum_makers")
         maker_timeout_sec = jm_single().maker_timeout_sec
@@ -587,7 +587,7 @@ class JMTakerClientProtocol(JMClientProtocol):
                                                    "blockchain_source")
         #needed only for channel naming convention
         network = jm_single().config.get("BLOCKCHAIN", "network")
-        irc_configs = get_irc_mchannels()
+        irc_configs = get_mchannels()
         minmakers = jm_single().config.getint("POLICY", "minimum_makers")
         maker_timeout_sec = jm_single().maker_timeout_sec
 
