@@ -471,7 +471,7 @@ class JMWalletDaemon(Service):
 
     #route to get external address for deposit
     @app.route('/address/new/<string:mixdepth>',methods=['GET'])
-    def getaddress(self,request,mixdepth):
+    def getaddress(self, request, mixdepth):
         # self.check_cookie(request)
         if not self.wallet_service:
             raise NoWalletFound()
@@ -479,14 +479,14 @@ class JMWalletDaemon(Service):
         address = self.wallet_service.get_external_addr(mixdepth)
         return response(request,address=address)
 
-    #route to list transactions
+    #route to list utxos
     @app.route('/wallet/transactions',methods=['GET'])
-    def listTransactions(self,request):
+    def listUtxos(self, request):
         if not self.wallet_service:
             raise NoWalletFound()
-        transactions = wallet_showutxos(self.wallet_service,False)
-        print(transactions)
-        return response(request,transactions=transactions)
+        utxos = wallet_showutxos(self.wallet_service, False)
+        
+        return response(request,transactions=utxos)
         
 
 def jmwalletd_main():
