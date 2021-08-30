@@ -24,13 +24,13 @@ from jmclient import Taker, Maker, jm_single, load_program_config, \
     SegwitWallet, get_daemon_serving_params, YieldGeneratorService, \
     SNICKERReceiverService, SNICKERReceiver, create_wallet, \
     StorageError, StoragePasswordError
-from jmbase.support import EXIT_ARGERROR, EXIT_FAILURE
-
+from jmbase.support import get_log, set_logging_level, jmprint,EXIT_ARGERROR, EXIT_FAILURE,DUST_THRESHOLD
 import glob
 
 import jwt
 # from sendpayment import main.taker_finished
 jlog = get_log()
+
 
 # for debugging; twisted.web.server.Request objects do not easily serialize:
 def print_req(request):
@@ -291,11 +291,15 @@ class JMWalletDaemon(Service):
             
             else:
                 config_json[key] = int(config_json[key])
+#  self.txfee_factor, self.cjfee_factor, self.size_factor
+        config_json['txfee_factor'] = None
+        config_json["cjfee_factor"] = None
+        config_json["size_factor"] = None
 
         self.services["maker"] = YieldGeneratorService(self.wallet_service,
                                 daemon_serving_host, daemon_serving_port,
                                 [config_json[x] for x in ["txfee", "cjfee_a",
-                                "cjfee_r", "ordertype", "minsize"]])
+                                "cjfee_r", "ordertype", "minsize","txfee_factor","cjfee_factor","size_factor"]])
         self.services["maker"].startService()
         return response(request, walletname=walletname)
 
@@ -493,68 +497,6 @@ class JMWalletDaemon(Service):
         return True
 
 
-    def taker_finished(res, fromtx=False, waittime=0.0, txdetails=None):
-        return
-        if fromtx == "unconfirmed":
-            #If final entry, stop *here*, don't wait for confirmation
-            if taker.schedule_index + 1 == len(taker.schedule):
-                reactor.stop()
-            return
-        if fromtx:
-            if res:
-                txd, txid = txdetails
-                reactor.callLater(waittime*60,
-                                  clientfactory.getClient().clientStart)
-            else:
-                #a transaction failed; we'll try to repeat without the
-                #troublemakers.
-                #If this error condition is reached from Phase 1 processing,
-                #and there are less than minimum_makers honest responses, we
-                #just give up (note that in tumbler we tweak and retry, but
-                #for sendpayment the user is "online" and so can manually
-                #try again).
-                #However if the error is in Phase 2 and we have minimum_makers
-                #or more responses, we do try to restart with the honest set, here.
-                if taker.latest_tx is None:
-                    #can only happen with < minimum_makers; see above.
-                    log.info("A transaction failed but there are insufficient "
-                             "honest respondants to continue; giving up.")
-                    reactor.stop()
-                    return
-                #This is Phase 2; do we have enough to try again?
-                taker.add_honest_makers(list(set(
-                    taker.maker_utxo_data.keys()).symmetric_difference(
-                        set(taker.nonrespondants))))
-                if len(taker.honest_makers) < jm_single().config.getint(
-                    "POLICY", "minimum_makers"):
-                    log.info("Too few makers responded honestly; "
-                             "giving up this attempt.")
-                    reactor.stop()
-                    return
-                jmprint("We failed to complete the transaction. The following "
-                      "makers responded honestly: " + str(taker.honest_makers) +\
-                      ", so we will retry with them.", "warning")
-                #Now we have to set the specific group we want to use, and hopefully
-                #they will respond again as they showed honesty last time.
-                #we must reset the number of counterparties, as well as fix who they
-                #are; this is because the number is used to e.g. calculate fees.
-                #cleanest way is to reset the number in the schedule before restart.
-                taker.schedule[taker.schedule_index][2] = len(taker.honest_makers)
-                log.info("Retrying with: " + str(taker.schedule[
-                    taker.schedule_index][2]) + " counterparties.")
-                #rewind to try again (index is incremented in Taker.initialize())
-                taker.schedule_index -= 1
-                taker.set_honest_only(True)
-                reactor.callLater(5.0, clientfactory.getClient().clientStart)
-        else:
-            if not res:
-                log.info("Did not complete successfully, shutting down")
-            #Should usually be unreachable, unless conf received out of order;
-            #because we should stop on 'unconfirmed' for last (see above)
-            else:
-                log.info("All transactions completed correctly")
-            reactor.stop()
-
     #route to start a coinjoin transaction
     @app.route('/wallet/taker/coinjoin',methods=['POST'])
     def doCoinjoin(self, request):
@@ -584,6 +526,68 @@ class JMWalletDaemon(Service):
         if jm_single().config.get("BLOCKCHAIN", "network") == "regtest":
             startLogging(sys.stdout)
         start_reactor(dhost, dport, clientfactory, daemon=daemon)
+
+    def taker_finished(res, fromtx=False, waittime=0.0, txdetails=None):
+        
+        if fromtx == "unconfirmed":
+            #If final entry, stop *here*, don't wait for confirmation
+            if taker.schedule_index + 1 == len(taker.schedule):
+                reactor.stop()
+            return
+        if fromtx:
+            if res:
+                txd, txid = txdetails
+                reactor.callLater(waittime*60,
+                                  clientfactory.getClient().clientStart)
+            else:
+                #a transaction failed; we'll try to repeat without the
+                #troublemakers.
+                #If this error condition is reached from Phase 1 processing,
+                #and there are less than minimum_makers honest responses, we
+                #just give up (note that in tumbler we tweak and retry, but
+                #for sendpayment the user is "online" and so can manually
+                #try again).
+                #However if the error is in Phase 2 and we have minimum_makers
+                #or more responses, we do try to restart with the honest set, here.
+                if taker.latest_tx is None:
+                    #can only happen with < minimum_makers; see above.
+                    jlog.info("A transaction failed but there are insufficient "
+                             "honest respondants to continue; giving up.")
+                    reactor.stop()
+                    return
+                #This is Phase 2; do we have enough to try again?
+                taker.add_honest_makers(list(set(
+                    taker.maker_utxo_data.keys()).symmetric_difference(
+                        set(taker.nonrespondants))))
+                if len(taker.honest_makers) < jm_single().config.getint(
+                    "POLICY", "minimum_makers"):
+                    jlog.info("Too few makers responded honestly; "
+                             "giving up this attempt.")
+                    reactor.stop()
+                    return
+                jmprint("We failed to complete the transaction. The following "
+                      "makers responded honestly: " + str(taker.honest_makers) +\
+                      ", so we will retry with them.", "warning")
+                #Now we have to set the specific group we want to use, and hopefully
+                #they will respond again as they showed honesty last time.
+                #we must reset the number of counterparties, as well as fix who they
+                #are; this is because the number is used to e.g. calculate fees.
+                #cleanest way is to reset the number in the schedule before restart.
+                taker.schedule[taker.schedule_index][2] = len(taker.honest_makers)
+                jlog.info("Retrying with: " + str(taker.schedule[
+                    taker.schedule_index][2]) + " counterparties.")
+                #rewind to try again (index is incremented in Taker.initialize())
+                taker.schedule_index -= 1
+                taker.set_honest_only(True)
+                reactor.callLater(5.0, clientfactory.getClient().clientStart)
+        else:
+            if not res:
+                jlog.info("Did not complete successfully, shutting down")
+            #Should usually be unreachable, unless conf received out of order;
+            #because we should stop on 'unconfirmed' for last (see above)
+            else:
+                jlog.info("All transactions completed correctly")
+            reactor.stop()
         
 
 def jmwalletd_main():
