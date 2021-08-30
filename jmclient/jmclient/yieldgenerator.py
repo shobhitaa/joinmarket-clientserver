@@ -79,10 +79,7 @@ class YieldGeneratorBasic(YieldGenerator):
             self.txfee_factor, self.cjfee_factor, self.size_factor = offerconfig
         super().__init__(wallet_service)
 
-        #commented above call with 8 values
-        # self.txfee, self.cjfee_a, self.cjfee_r, self.ordertype, self.minsize=offerconfig
-
-        # super().__init__(wallet_service)
+        
 
     def create_my_orders(self):
         mix_balance = self.get_available_mixdepths()
