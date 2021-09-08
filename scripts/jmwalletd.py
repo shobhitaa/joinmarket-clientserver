@@ -1,4 +1,5 @@
 #! /usr/bin/env python
+
 from jmbitcoin import *
 import datetime
 import os
@@ -23,12 +24,12 @@ from jmclient import Taker, Maker, jm_single, load_program_config, \
     open_test_wallet_maybe, wallet, wallet_display, SegwitLegacyWallet, \
     SegwitWallet, get_daemon_serving_params, YieldGeneratorService, \
     SNICKERReceiverService, SNICKERReceiver, create_wallet, \
-    StorageError, StoragePasswordError
+    StorageError, StoragePasswordError, get_max_cj_fee_values
 from jmbase.support import get_log, set_logging_level, jmprint,EXIT_ARGERROR, EXIT_FAILURE,DUST_THRESHOLD
 import glob
 
 import jwt
-# from sendpayment import main.taker_finished
+
 jlog = get_log()
 
 
@@ -272,6 +273,7 @@ class JMWalletDaemon(Service):
     def start_maker(self, request, walletname):
         """ Use the configuration in the POST body to start the yield generator:
         """
+        self.check_cookie(request)
         assert isinstance(request.content, BytesIO)
         config_json = self.get_POST_body(request, ["txfee", "cjfee_a", "cjfee_r",
                                                    "ordertype", "minsize"])
@@ -476,7 +478,8 @@ class JMWalletDaemon(Service):
     #route to get external address for deposit
     @app.route('/address/new/<string:mixdepth>',methods=['GET'])
     def getaddress(self, request, mixdepth):
-        # self.check_cookie(request)
+        
+        self.check_cookie(request)
         if not self.wallet_service:
             raise NoWalletFound()
         mixdepth = int(mixdepth)
@@ -484,8 +487,9 @@ class JMWalletDaemon(Service):
         return response(request,address=address)
 
     #route to list utxos
-    @app.route('/wallet/transactions',methods=['GET'])
+    @app.route('/wallet/utxos',methods=['GET'])
     def listUtxos(self, request):
+        self.check_cookie(request)
         if not self.wallet_service:
             raise NoWalletFound()
         utxos = wallet_showutxos(self.wallet_service, False)
@@ -493,14 +497,14 @@ class JMWalletDaemon(Service):
         return response(request,transactions=utxos)
 
     #return True for now
-    def filter_orders_callback(orderfees, cjamount,dummy):
+    def filter_orders_callback(self,orderfees, cjamount):
         return True
 
 
     #route to start a coinjoin transaction
     @app.route('/wallet/taker/coinjoin',methods=['POST'])
     def doCoinjoin(self, request):
-
+        self.check_cookie(request)
         if not self.wallet_service:
             raise NoWalletFound()
 
@@ -509,14 +513,19 @@ class JMWalletDaemon(Service):
         waittime = 0
         rounding=16
         completion_flag=0
-        #list of tuple
-        schedule = [(request_data["mixdepth"],request_data["amount"],request_data["counterparties"],request_data["destination"],waittime,rounding,completion_flag)]
+        #list of list
+        schedule = [[int(request_data["mixdepth"]), int(request_data["amount"]), int(request_data["counterparties"]), request_data["destination"], waittime, rounding, completion_flag]]
         print(schedule)
         #instantiate a taker
         #keeping order_chooser as default for now
-        taker = Taker(self.wallet_service, schedule, max_cj_fee = (1,float('inf')), callbacks=(self.filter_orders_callback, None,  self.taker_finished))
 
-        clientfactory = JMClientProtocolFactory(taker)
+        #max_cj_feee is to be set based on config values (jmsingle.config.get policy var->max cj fee abs in configure.py)
+        
+        max_cj_fee=(1,float('inf'))
+        print("max cj fee is,",max_cj_fee)
+        self.taker = Taker(self.wallet_service, schedule, max_cj_fee = max_cj_fee, callbacks=(self.filter_orders_callback, None,  self.taker_finished))
+
+        clientfactory = JMClientProtocolFactory(self.taker)
         
         nodaemon = jm_single().config.getint("DAEMON", "no_daemon")
         daemon = True if nodaemon == 1 else False
@@ -525,14 +534,12 @@ class JMWalletDaemon(Service):
         
         if jm_single().config.get("BLOCKCHAIN", "network") == "regtest":
             startLogging(sys.stdout)
-        start_reactor(dhost, dport, clientfactory, daemon=daemon)
+        start_reactor(dhost, dport, clientfactory, daemon=daemon, rs=False)
 
-    def taker_finished(res, fromtx=False, waittime=0.0, txdetails=None):
+    def taker_finished(self, res, fromtx=False, waittime=0.0, txdetails=None):
         
         if fromtx == "unconfirmed":
             #If final entry, stop *here*, don't wait for confirmation
-            if taker.schedule_index + 1 == len(taker.schedule):
-                reactor.stop()
             return
         if fromtx:
             if res:
@@ -549,36 +556,36 @@ class JMWalletDaemon(Service):
                 #try again).
                 #However if the error is in Phase 2 and we have minimum_makers
                 #or more responses, we do try to restart with the honest set, here.
-                if taker.latest_tx is None:
+                if self.taker.latest_tx is None:
                     #can only happen with < minimum_makers; see above.
                     jlog.info("A transaction failed but there are insufficient "
                              "honest respondants to continue; giving up.")
                     reactor.stop()
                     return
                 #This is Phase 2; do we have enough to try again?
-                taker.add_honest_makers(list(set(
-                    taker.maker_utxo_data.keys()).symmetric_difference(
-                        set(taker.nonrespondants))))
-                if len(taker.honest_makers) < jm_single().config.getint(
+                self.taker.add_honest_makers(list(set(
+                    self.taker.maker_utxo_data.keys()).symmetric_difference(
+                        set(self.taker.nonrespondants))))
+                if len(self.taker.honest_makers) < jm_single().config.getint(
                     "POLICY", "minimum_makers"):
                     jlog.info("Too few makers responded honestly; "
                              "giving up this attempt.")
                     reactor.stop()
                     return
                 jmprint("We failed to complete the transaction. The following "
-                      "makers responded honestly: " + str(taker.honest_makers) +\
+                      "makers responded honestly: " + str(self.taker.honest_makers) +\
                       ", so we will retry with them.", "warning")
                 #Now we have to set the specific group we want to use, and hopefully
                 #they will respond again as they showed honesty last time.
                 #we must reset the number of counterparties, as well as fix who they
                 #are; this is because the number is used to e.g. calculate fees.
                 #cleanest way is to reset the number in the schedule before restart.
-                taker.schedule[taker.schedule_index][2] = len(taker.honest_makers)
-                jlog.info("Retrying with: " + str(taker.schedule[
-                    taker.schedule_index][2]) + " counterparties.")
+                self.taker.schedule[self.taker.schedule_index][2] = len(self.taker.honest_makers)
+                jlog.info("Retrying with: " + str(self.taker.schedule[
+                    self.taker.schedule_index][2]) + " counterparties.")
                 #rewind to try again (index is incremented in Taker.initialize())
-                taker.schedule_index -= 1
-                taker.set_honest_only(True)
+                self.taker.schedule_index -= 1
+                self.taker.set_honest_only(True)
                 reactor.callLater(5.0, clientfactory.getClient().clientStart)
         else:
             if not res:
