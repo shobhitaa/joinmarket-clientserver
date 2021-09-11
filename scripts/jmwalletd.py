@@ -207,6 +207,16 @@ class JMWalletDaemon(Service):
             walletinfo = wallet_display(self.wallet_service, False, jsonified=True)
             return response(request, walletname=walletname, walletinfo=walletinfo)
 
+    #Heartbeat route
+
+    @app.route('/session',methods=['GET'])
+    def sessionExists(self, request):
+        #if no wallet loaded then clear frontend session info
+        #when no wallet status is false
+        session = not self.cookie==None
+        return response(request,session=session)
+
+
     # handling CORS preflight for any route:
     @app.route('/', branch=True, methods=['OPTIONS'])
     def preflight(self, request):
